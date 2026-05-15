@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TripAI - Smart Trip Planner</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config={theme:{extend:{colors:{dark:{50:'#f5f5f6',100:'#e6e6e7',200:'#cfd0d2',300:'#adaeb2',400:'#84858b',500:'#696a70',600:'#5a5a60',700:'#4c4d51',800:'#434347',900:'#1a1a2e',950:'#0f0f1a'},accent:{400:'#818cf8',500:'#6366f1',600:'#4f46e5'},glow:{cyan:'#06b6d4',purple:'#a855f7',pink:'#ec4899'}},fontFamily:{sans:['"Inter"','system-ui','sans-serif']}}}}
+</script>
+<style>
+body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#0f0f1a;color:#e6e6e7;-webkit-font-smoothing:antialiased}
+.gradient-text{background:linear-gradient(135deg,#06b6d4,#a855f7,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.glass{background:rgba(26,26,46,.6);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.06)}
+.gradient-border{position:relative;border-radius:1rem}
+.gradient-border::before{content:'';position:absolute;inset:0;padding:1px;border-radius:inherit;background:linear-gradient(135deg,#06b6d4,#a855f7,#ec4899);-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none}
+.tab-active{background:#4f46e5;color:#fff}
+.loader-dot{animation:pd 1.4s infinite ease-in-out both}
+.loader-dot:nth-child(1){animation-delay:-.32s}
+.loader-dot:nth-child(2){animation-delay:-.16s}
+@keyframes pd{0%,80%,100%{transform:scale(0)}40%{transform:scale(1)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+.fade-up{animation:fadeUp .4s ease-out both}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#0f0f1a}::-webkit-scrollbar-thumb{background:#4c4d51;border-radius:3px}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="fixed top-0 w-full z-50 glass border-b border-white/5">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+<a href="#" onclick="show('home')" class="flex items-center gap-2">
+<svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
+<span class="text-xl font-bold gradient-text">TripAI</span>
+</a>
+<div class="flex items-center gap-3" id="nav-links"></div>
+</div>
+</nav>
+
+<!-- Single render target -->
+<div id="app"></div>
+
+<script>
+// =====================================================================
+//  STATE
+// =====================================================================
+let loggedIn = false;
+let currentPage = 'home';
+let viewingTripId = null;
+let activeDay = 0;
+let createForm = { destination:'', days:3, budget:'medium', travelStyle:'solo' };
+let selectedBudget = 'medium';
+let selectedStyle = 'solo';
+
+// Persistent trip store (survives page nav, lost on reload)
+let trips = [];
+let nextId = 1;
+
+// =====================================================================
+//  ITINERARY GENERATOR  (client-side, mirrors server fallback logic)
+// =====================================================================
+function generateItinerary(destination, days, budget, travelStyle) {
+  const costPerAct = {low:'$8',medium:'$20',high:'$50'};
+  const totalCosts = {low:'$'+(days*45)+' - $'+(days*80),medium:'$'+(days*100)+' - $'+(days*180),high:'$'+(days*250)+' - $'+(days*450)};
+  const c = costPerAct[budget]||costPerAct.medium;
+
+  const poiDb = {
+    default:[
+      {a:'Visit the main historical landmark',l:'City Center'},{a:'Explore the local market',l:'Market District'},
+      {a:'Walking food tour',l:'Old Town'},{a:'Museum of local history',l:'Cultural Quarter'},
+      {a:'Scenic viewpoint hike',l:'Hilltop Park'},{a:'Boat ride or waterfront walk',l:'Waterfront'},
+      {a:'Traditional cooking class',l:'Culinary School'},{a:'Street art walking tour',l:'Arts District'},
+      {a:'Visit a famous temple or cathedral',l:'Historic District'},{a:'Sunset at the best lookout point',l:'Panoramic Point'},
+      {a:'Shopping at local boutiques',l:'Shopping Street'},{a:'Try the signature local dish',l:'Famous Eatery'},
+      {a:'Relax at a park or garden',l:'Central Park'},{a:'Day trip to nearby village',l:'Countryside'},
+      {a:'Nightlife & live music',l:'Entertainment Quarter'},{a:'Photography walk',l:'Scenic Route'},
+      {a:'Cycling tour of the city',l:'Bike Path'},{a:'Visit a local festival or event',l:'Town Square'},
+    ]
+  };
+
+  const styleActs = {
+    solo:['Cafe hopping','Solo photography walk','Journal at a scenic spot','Visit a bookshop','Meditate at a quiet temple'],
+    couple:['Romantic dinner cruise','Couples spa session','Wine tasting','Sunset picnic','Horse carriage ride'],
+    family:['Theme park visit','Zoo & aquarium','Family cooking class','Interactive science museum','Beach day'],
+    friends:['Pub crawl','Adventure sports','Group hiking','Beach volleyball','Night market tour'],
+  };
+
+  const extras = styleActs[travelStyle]||styleActs.solo;
+  const pois = poiDb.default;
+  const times = ['08:00 AM','09:30 AM','11:00 AM','12:30 PM','02:30 PM','04:30 PM','06:30 PM'];
+
+  const itinerary = [];
+  for(let d=1;d<=days;d++){
+    const acts=[];
+    for(let a=0;a<Math.min(6,times.length);a++){
+      const pool = a%3===0 ? extras : pois;
+      const item = pool[(d*7+a)%pool.length];
+      const isExtra = typeof item === 'string';
+      acts.push({
+        time:times[a],
+        activity:isExtra?item:item.a,
+        location:isExtra?`${destination} area`:item.l+', '+destination,
+        estimatedCost:a===0?'Free':c,
+        description:isExtra?`Enjoy ${item.toLowerCase()} in ${destination}`:`Great experience in the heart of ${destination}`
+      });
+    }
+    itinerary.push({
+      day:d,
+      title:d===1?`Day ${d} - Arrival & First Impressions`:d===days?`Day ${d} - Final Day & Departure`:`Day ${d} - Exploring ${destination}`,
+      activities:acts,
+      meals:{
+        breakfast:d===1?'Hotel breakfast or nearby café':`Local café in ${destination}`,
+        lunch:`Popular ${destination} eatery`,
+        dinner:`Authentic ${destination} restaurant`
+      },
+      tips:[
+        d===1?'Arrive early to beat crowds':'Start your day early for the best experience',
+        'Stay hydrated and carry sunscreen',
+        budget==='low'?'Use public transport to save money':'Consider a day pass for transport'
+      ]
+    });
+  }
+
+  const hotels = {
+    low:[{name:`${destination} Backpackers Hostel`,priceRange:'$15-$40/night',rating:'4.0/5',location:'City Center'},
+         {name:`${destination} Budget Inn`,priceRange:'$25-$50/night',rating:'3.8/5',location:'Near Station'},
+         {name:`Cozy ${destination} Guesthouse`,priceRange:'$20-$45/night',rating:'4.1/5',location:'Old Town'}],
+    medium:[{name:`${destination} Comfort Hotel`,priceRange:'$60-$120/night',rating:'4.3/5',location:'Downtown'},
+            {name:`${destination} Boutique Stay`,priceRange:'$80-$140/night',rating:'4.5/5',location:'Arts District'},
+            {name:`Central ${destination} Suites`,priceRange:'$70-$130/night',rating:'4.2/5',location:'City Center'}],
+    high:[{name:`${destination} Grand Resort & Spa`,priceRange:'$200-$500/night',rating:'4.8/5',location:'Premium District'},
+          {name:`The ${destination} Palace Hotel`,priceRange:'$250-$600/night',rating:'4.9/5',location:'Waterfront'},
+          {name:`${destination} Luxury Collection`,priceRange:'$180-$400/night',rating:'4.7/5',location:'Business District'}]
+  };
+
+  return {
+    itinerary,
+    totalEstimatedCost:totalCosts[budget]||totalCosts.medium,
+    bestTimeToVisit:'October - March',
+    generalTips:[
+      `Learn a few local phrases before visiting ${destination}`,
+      'Book accommodations in advance for better rates',
+      'Always carry a copy of your travel documents',
+      `Try local cuisine at small family-owned restaurants in ${destination}`,
+      'Download offline maps before your trip'
+    ],
+    hotelSuggestions:hotels[budget]||hotels.medium,
+    weatherInfo:`${destination} generally has pleasant weather for travelers. Check forecasts close to your travel dates for the most accurate conditions.`
+  };
+}
+
+// =====================================================================
+//  NAV
+// =====================================================================
+function updateNav(){
+  const n=document.getElementById('nav-links');
+  if(loggedIn){
+    n.innerHTML=`<a href="#" onclick="show('dashboard')" class="text-sm text-gray-400 hover:text-white transition px-3 py-2">My Trips</a>
+    <button onclick="show('create')" class="flex items-center gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg transition">+ New Trip</button>
+    <div class="flex items-center gap-2 ml-2 pl-4 border-l border-white/10"><span class="text-sm text-gray-400 hidden sm:inline">Demo User</span>
+    <button onclick="doLogout()" class="text-gray-500 hover:text-pink-400 transition p-1" title="Logout">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h5a2 2 0 012 2v1"/></svg>
+    </button></div>`;
+  } else {
+    n.innerHTML=`<a href="#" onclick="show('login')" class="text-sm text-gray-400 hover:text-white transition px-3 py-2">Login</a>
+    <button onclick="show('signup')" class="text-sm bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg transition">Get Started</button>`;
+  }
+}
+function doLogout(){ loggedIn=false; trips=[]; show('home'); }
+
+// =====================================================================
+//  ROUTER
+// =====================================================================
+function show(page, data){
+  currentPage=page;
+  if(data) viewingTripId=data;
+  if(page==='dashboard'||page==='create'||page==='trip') loggedIn=true;
+  updateNav();
+  render();
+  window.scrollTo(0,0);
+}
+
+// =====================================================================
+//  RENDER DISPATCHER
+// =====================================================================
+function render(){
+  const app=document.getElementById('app');
+  switch(currentPage){
+    case 'home': app.innerHTML=renderHome(); break;
+    case 'login': app.innerHTML=renderLogin(); break;
+    case 'signup': app.innerHTML=renderSignup(); break;
+    case 'dashboard': app.innerHTML=renderDashboard(); break;
+    case 'create': app.innerHTML=renderCreate(); break;
+    case 'loading': app.innerHTML=renderLoading(); break;
+    case 'trip': app.innerHTML=renderTripDetails(); initDayTabs(); break;
+  }
+}
+
+// =====================================================================
+//  PAGE: HOME
+// =====================================================================
+function renderHome(){
+  return `
+  <section class="relative overflow-hidden">
+    <div class="absolute -top-40 -left-40 w-96 h-96 bg-cyan-400/10 rounded-full blur-3xl"></div>
+    <div class="absolute top-20 right-0 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl"></div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 sm:py-36 text-center relative z-10">
+      <h1 class="text-4xl sm:text-6xl lg:text-7xl font-extrabold leading-tight fade-up">Plan Your Dream Trip<br><span class="gradient-text">with AI Intelligence</span></h1>
+      <p class="mt-6 text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto fade-up" style="animation-delay:.15s">Enter your destination, budget, and travel style. Our AI creates a complete day-wise itinerary with places, costs, hotel tips, and more.</p>
+      <div class="mt-10 flex flex-col sm:flex-row gap-4 justify-center fade-up" style="animation-delay:.3s">
+        <button onclick="show('create')" class="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-500 text-white font-semibold px-8 py-3.5 rounded-xl text-lg hover:opacity-90 transition shadow-lg shadow-indigo-500/25">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          Start Planning
+        </button>
+        <button onclick="show('login')" class="inline-flex items-center justify-center border border-white/10 text-gray-300 font-medium px-8 py-3.5 rounded-xl text-lg hover:bg-white/5 transition">Login</button>
+      </div>
+    </div>
+  </section>
+  <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+    <h2 class="text-3xl font-bold text-center mb-14">Why <span class="gradient-text">TripAI</span>?</h2>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div class="glass rounded-2xl p-6 fade-up"><div class="text-2xl mb-3">&#9889;</div><h3 class="text-lg font-semibold text-white mb-2">AI-Powered Itineraries</h3><p class="text-sm text-gray-500">Personalized day-by-day travel plans generated in seconds.</p></div>
+      <div class="glass rounded-2xl p-6 fade-up" style="animation-delay:.1s"><div class="text-2xl mb-3">&#128205;</div><h3 class="text-lg font-semibold text-white mb-2">Smart Destinations</h3><p class="text-sm text-gray-500">Discover places, restaurants, and hidden gems.</p></div>
+      <div class="glass rounded-2xl p-6 fade-up" style="animation-delay:.2s"><div class="text-2xl mb-3">&#128176;</div><h3 class="text-lg font-semibold text-white mb-2">Budget Aware</h3><p class="text-sm text-gray-500">Plans tailored from backpacking to luxury.</p></div>
+      <div class="glass rounded-2xl p-6 fade-up" style="animation-delay:.3s"><div class="text-2xl mb-3">&#128197;</div><h3 class="text-lg font-semibold text-white mb-2">Flexible Planning</h3><p class="text-sm text-gray-500">1 to 30 days, solo to family adventures.</p></div>
+    </div>
+  </section>
+  <footer class="border-t border-white/5 py-8 text-center text-gray-600 text-sm">&copy; 2026 TripAI. Built with React, Node.js &amp; OpenAI.</footer>`;
+}
+
+// =====================================================================
+//  PAGE: LOGIN
+// =====================================================================
+function renderLogin(){
+  return `
+  <div class="min-h-screen pt-16 flex items-center justify-center px-4">
+  <div class="w-full max-w-md fade-up"><div class="glass rounded-2xl p-8 gradient-border">
+    <h1 class="text-2xl font-bold text-white mb-1">Welcome back</h1>
+    <p class="text-gray-500 text-sm mb-8">Sign in to access your trips</p>
+    <form onsubmit="event.preventDefault();show('dashboard')" class="space-y-5">
+      <div><label class="block text-sm text-gray-400 mb-1.5">Email</label>
+      <input type="email" value="demo@tripai.com" class="w-full bg-[#0f0f1a] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"/></div>
+      <div><label class="block text-sm text-gray-400 mb-1.5">Password</label>
+      <input type="password" value="password123" class="w-full bg-[#0f0f1a] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"/></div>
+      <button type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-purple-500 text-white font-medium py-2.5 rounded-lg hover:opacity-90 transition">Sign In</button>
+    </form>
+    <p class="text-sm text-gray-500 text-center mt-6">Don't have an account? <a href="#" onclick="show('signup')" class="text-indigo-400 hover:underline">Sign up</a></p>
+  </div></div></div>`;
+}
+
+// =====================================================================
+//  PAGE: SIGNUP
+// =====================================================================
+function renderSignup(){
+  return `
+  <div class="min-h-screen pt-16 flex items-center justify-center px-4">
+  <div class="w-full max-w-md fade-up"><div class="glass rounded-2xl p-8 gradient-border">
+    <h1 class="text-2xl font-bold text-white mb-1">Create account</h1>
+    <p class="text-gray-500 text-sm mb-8">Start planning your dream trips with AI</p>
+    <form onsubmit="event.preventDefault();show('dashboard')" class="space-y-5">
+      <div><label class="block text-sm text-gray-400 mb-1.5">Full Name</label>
+      <input type="text" class="w-full bg-[#0f0f1a] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50" placeholder="John Doe"/></div>
+      <div><label class="block text-sm text-gray-400 mb-1.5">Email</label>
+      <input type="email" class="w-full bg-[#0f0f1a] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50" placeholder="you@example.com"/></div>
+      <div><label class="block text-sm text-gray-400 mb-1.5">Password</label>
+      <input type="password" class="w-full bg-[#0f0f1a] border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50" placeholder="Min. 6 characters"/></div>
+      <button type="submit" class="w-full bg-gradient-to-r from-indigo-600 to-purple-500 text-white font-medium py-2.5 rounded-lg hover:opacity-90 transition">Create Account</button>
+    </form>
+    <p class="text-sm text-gray-500 text-center mt-6">Already have an account? <a href="#" onclick="show('login')" class="text-indigo-400 hover:underline">Sign in</a></p>
+  </div></div></div>`;
+}
+
+// =====================================================================
+//  PAGE: DASHBOARD
+// =====================================================================
+function renderDashboard(){
+  const count = trips.length;
+  let cards = '';
+  if(count===0){
+    cards = `<div class="col-span-full glass rounded-2xl p-16 text-center">
+      <div class="text-4xl mb-4">&#128205;</div>
+      <h2 class="text-xl font-semibold text-white mb-2">No trips yet</h2>
+      <p class="text-gray-500 mb-6">Create your first AI-powered trip itinerary</p>
+      <button onclick="show('create')" class="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-6 py-3 rounded-xl transition">+ Plan a Trip</button>
+    </div>`;
+  } else {
+    const budgetColors = {low:'bg-green-500/10 text-green-400',medium:'bg-yellow-500/10 text-yellow-400',high:'bg-red-500/10 text-red-400'};
+    const styleColors = {solo:'bg-cyan-500/10 text-cyan-400',couple:'bg-pink-500/10 text-pink-400',family:'bg-purple-500/10 text-purple-400',friends:'bg-orange-500/10 text-orange-400'};
+    const styleIcons = {solo:'&#129523;',couple:'&#128149;',family:'&#128104;&#8205;&#128105;&#8205;&#128103;&#8205;&#128102;',friends:'&#127881;'};
+    trips.forEach((t,i)=>{
+      cards += `<div class="glass rounded-2xl p-6 hover:border-white/10 transition group relative cursor-pointer fade-up" style="animation-delay:${i*0.06}s" onclick="show('trip',${t.id})">
+        <button onclick="event.stopPropagation();deleteTrip(${t.id})" class="absolute top-4 right-4 p-2 text-gray-600 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition opacity-0 group-hover:opacity-100" title="Delete trip">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        </button>
+        <h3 class="text-lg font-semibold text-white mb-3 flex items-center gap-2">
+          <span class="text-cyan-400">&#128205;</span> ${t.destination}
+        </h3>
+        <div class="flex flex-wrap gap-2 mb-4">
+          <span class="text-xs px-2.5 py-1 rounded-full bg-white/5 text-gray-400">&#128197; ${t.days} day${t.days>1?'s':''}</span>
+          <span class="text-xs px-2.5 py-1 rounded-full ${budgetColors[t.budget]} capitalize">&#128176; ${t.budget}</span>
+          <span class="text-xs px-2.5 py-1 rounded-full ${styleColors[t.travelStyle]} capitalize">${styleIcons[t.travelStyle]} ${t.travelStyle}</span>
+        </div>
+        <p class="text-sm text-gray-500">Est. cost: <span class="text-gray-300">${t.totalEstimatedCost}</span></p>
+        <p class="text-xs text-gray-700 mt-3">${t.createdAt}</p>
+      </div>`;
+    });
+  }
+
+  return `
+  <div class="min-h-screen pt-24 pb-16 px-4"><div class="max-w-6xl mx-auto">
+    <div class="flex items-center justify-between mb-10">
+      <div><h1 class="text-3xl font-bold text-white">My Trips</h1>
+      <p class="text-gray-500 text-sm mt-1">${count} trip${count!==1?'s':''} planned</p></div>
+      <button onclick="show('create')" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-5 py-2.5 rounded-xl transition">+ New Trip</button>
+    </div>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">${cards}</div>
+  </div></div>`;
+}
+
+// =====================================================================
+//  PAGE: CREATE TRIP
+// =====================================================================
+function renderCreate(){
+  selectedBudget='medium'; selectedStyle='solo';
+  return `
+  <div class="min-h-screen pt-24 pb-16 px-4"><div class="max-w-2xl mx-auto fade-up">
+    <h1 class="text-3xl font-bold text-white mb-2">Plan a New Trip</h1>
+    <p class="text-gray-500 mb-10">Fill in the details and our AI will generate a complete itinerary for you.</p>
+    <div id="create-error" class="hidden text-red-400 bg-red-400/10 text-sm rounded-lg p-3 mb-6"></div>
+    <form onsubmit="event.preventDefault();handleCreateTrip()" class="space-y-8">
+      <div>
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-300 mb-2">&#128205; Destination</label>
+        <input type="text" id="inp-dest" class="w-full bg-[#0f0f1a] border border-white/10 rounded-xl px-4 py-3 text-white placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition" placeholder="e.g. Tokyo, Japan"/>
+      </div>
+      <div>
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-300 mb-2">&#128197; Number of Days</label>
+        <div class="flex items-center gap-4">
+          <input type="range" min="1" max="30" value="3" id="inp-days" oninput="document.getElementById('dayVal').textContent=this.value" class="flex-1 accent-indigo-500"/>
+          <span id="dayVal" class="text-2xl font-bold text-white w-12 text-center">3</span>
+        </div>
+        <p class="text-xs text-gray-600 mt-1">1 - 30 days</p>
+      </div>
+      <div>
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-300 mb-3">&#128176; Budget</label>
+        <div class="grid grid-cols-3 gap-3" id="budget-group">
+          <button type="button" data-val="low" onclick="pickBudget('low',this)" class="glass rounded-xl p-4 text-left border border-transparent hover:border-white/10 transition">
+            <span class="text-xl">&#127890;</span><p class="text-sm font-medium text-white mt-2">Budget</p><p class="text-xs text-gray-600 mt-1">Hostels, street food, public transport</p></button>
+          <button type="button" data-val="medium" onclick="pickBudget('medium',this)" class="glass rounded-xl p-4 text-left border border-indigo-500 bg-indigo-500/10 transition">
+            <span class="text-xl">&#127976;</span><p class="text-sm font-medium text-white mt-2">Moderate</p><p class="text-xs text-gray-600 mt-1">Mid-range hotels, restaurants, taxis</p></button>
+          <button type="button" data-val="high" onclick="pickBudget('high',this)" class="glass rounded-xl p-4 text-left border border-transparent hover:border-white/10 transition">
+            <span class="text-xl">&#10024;</span><p class="text-sm font-medium text-white mt-2">Luxury</p><p class="text-xs text-gray-600 mt-1">5-star hotels, fine dining, private transfers</p></button>
+        </div>
+      </div>
+      <div>
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-300 mb-3">&#128101; Travel Style</label>
+        <div class="grid grid-cols-4 gap-3" id="style-group">
+          <button type="button" data-val="solo" onclick="pickStyle('solo',this)" class="glass rounded-xl p-4 text-center border border-indigo-500 bg-indigo-500/10 transition">
+            <span class="text-2xl">&#129523;</span><p class="text-xs font-medium text-white mt-2">Solo</p></button>
+          <button type="button" data-val="couple" onclick="pickStyle('couple',this)" class="glass rounded-xl p-4 text-center border border-transparent hover:border-white/10 transition">
+            <span class="text-2xl">&#128149;</span><p class="text-xs font-medium text-white mt-2">Couple</p></button>
+          <button type="button" data-val="family" onclick="pickStyle('family',this)" class="glass rounded-xl p-4 text-center border border-transparent hover:border-white/10 transition">
+            <span class="text-2xl">&#128104;&#8205;&#128105;&#8205;&#128103;&#8205;&#128102;</span><p class="text-xs font-medium text-white mt-2">Family</p></button>
+          <button type="button" data-val="friends" onclick="pickStyle('friends',this)" class="glass rounded-xl p-4 text-center border border-transparent hover:border-white/10 transition">
+            <span class="text-2xl">&#127881;</span><p class="text-xs font-medium text-white mt-2">Friends</p></button>
+        </div>
+      </div>
+      <button type="submit" class="w-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-500 text-white font-semibold py-3.5 rounded-xl text-lg hover:opacity-90 transition shadow-lg shadow-indigo-500/25">
+        Generate Itinerary with AI
+      </button>
+    </form>
+  </div></div>`;
+}
+
+function pickBudget(val,el){
+  selectedBudget=val;
+  document.querySelectorAll('#budget-group button').forEach(b=>{b.classList.remove('border-indigo-500','bg-indigo-500/10');b.classList.add('border-transparent')});
+  el.classList.add('border-indigo-500','bg-indigo-500/10');el.classList.remove('border-transparent');
+}
+function pickStyle(val,el){
+  selectedStyle=val;
+  document.querySelectorAll('#style-group button').forEach(b=>{b.classList.remove('border-indigo-500','bg-indigo-500/10');b.classList.add('border-transparent')});
+  el.classList.add('border-indigo-500','bg-indigo-500/10');el.classList.remove('border-transparent');
+}
+
+function handleCreateTrip(){
+  const dest = document.getElementById('inp-dest').value.trim();
+  const days = parseInt(document.getElementById('inp-days').value);
+  const errEl = document.getElementById('create-error');
+
+  if(!dest){
+    errEl.textContent='Please enter a destination';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  // Show loading
+  const loadDest = dest;
+  const loadDays = days;
+  currentPage='loading';
+  document.getElementById('app').innerHTML = renderLoadingScreen(loadDest, loadDays);
+
+  // Simulate AI generation delay
+  setTimeout(()=>{
+    const ai = generateItinerary(dest, days, selectedBudget, selectedStyle);
+    const trip = {
+      id: nextId++,
+      destination: dest,
+      days: days,
+      budget: selectedBudget,
+      travelStyle: selectedStyle,
+      itinerary: ai.itinerary,
+      totalEstimatedCost: ai.totalEstimatedCost,
+      bestTimeToVisit: ai.bestTimeToVisit,
+      generalTips: ai.generalTips,
+      hotelSuggestions: ai.hotelSuggestions,
+      weatherInfo: ai.weatherInfo,
+      createdAt: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})
+    };
+    trips.unshift(trip);
+    show('trip', trip.id);
+  }, 2000);
+}
+
+function renderLoadingScreen(dest, days){
+  return `
+  <div class="min-h-screen pt-16 flex flex-col items-center justify-center">
+    <div class="flex gap-2 mb-6">
+      <div class="w-4 h-4 rounded-full bg-cyan-400 loader-dot"></div>
+      <div class="w-4 h-4 rounded-full bg-purple-500 loader-dot"></div>
+      <div class="w-4 h-4 rounded-full bg-pink-500 loader-dot"></div>
+    </div>
+    <p class="text-gray-400 text-sm animate-pulse">Creating your ${days}-day itinerary for ${dest}...</p>
+    <p class="text-gray-600 text-xs mt-2">Our AI is planning the perfect trip</p>
+  </div>`;
+}
+
+// =====================================================================
+//  DELETE TRIP
+// =====================================================================
+function deleteTrip(id){
+  if(!confirm('Delete this trip permanently?')) return;
+  trips = trips.filter(t=>t.id!==id);
+  if(currentPage==='trip' && viewingTripId===id){
+    show('dashboard');
+  } else {
+    render();
+  }
+}
+
+// =====================================================================
+//  PAGE: TRIP DETAILS
+// =====================================================================
+function renderTripDetails(){
+  const trip = trips.find(t=>t.id===viewingTripId);
+  if(!trip) return `<div class="min-h-screen pt-24 flex items-center justify-center"><p class="text-gray-500">Trip not found.</p></div>`;
+
+  activeDay=0;
+
+  // Hotels HTML
+  let hotelsHtml='';
+  if(trip.hotelSuggestions&&trip.hotelSuggestions.length>0){
+    hotelsHtml=`<div class="glass rounded-2xl p-6 mt-6">
+      <h3 class="text-lg font-semibold text-white mb-4">Hotel Suggestions</h3>
+      <div class="grid sm:grid-cols-3 gap-4">
+      ${trip.hotelSuggestions.map(h=>`
+        <div class="bg-[#0f0f1a]/50 rounded-xl p-4">
+          <h4 class="text-sm font-medium text-white">${h.name}</h4>
+          <p class="text-xs text-gray-500 mt-1">${h.location}</p>
+          <div class="flex justify-between mt-2 text-xs">
+            <span class="text-pink-400">${h.priceRange}</span>
+            <span class="text-yellow-400">${h.rating}</span>
+          </div>
+        </div>`).join('')}
+      </div></div>`;
+  }
+
+  // General tips
+  let tipsHtml='';
+  if(trip.generalTips&&trip.generalTips.length>0){
+    tipsHtml=`<div class="glass rounded-2xl p-6 mt-8">
+      <h3 class="text-lg font-semibold text-white mb-4">General Travel Tips</h3>
+      <ul class="space-y-2">
+      ${trip.generalTips.map(t=>`<li class="text-sm text-gray-400 flex gap-2"><span class="text-cyan-400 shrink-0">&#10003;</span> ${t}</li>`).join('')}
+      </ul></div>`;
+  }
+
+  return `
+  <div class="min-h-screen pt-24 pb-16 px-4"><div class="max-w-6xl mx-auto fade-up">
+    <div class="flex items-center justify-between mb-8">
+      <button onclick="show('dashboard')" class="flex items-center gap-2 text-sm text-gray-500 hover:text-white transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg> Back to trips
+      </button>
+      <button onclick="deleteTrip(${trip.id})" class="flex items-center gap-2 text-sm text-gray-600 hover:text-red-400 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete
+      </button>
+    </div>
+
+    <!-- Header card -->
+    <div class="glass rounded-2xl p-8 mb-6">
+      <h1 class="text-3xl sm:text-4xl font-bold text-white flex items-center gap-3">
+        <span class="text-cyan-400">&#128205;</span> ${trip.destination}
+      </h1>
+      <div class="flex flex-wrap gap-4 mt-4 text-sm text-gray-400">
+        <span>&#128197; ${trip.days} day${trip.days>1?'s':''}</span>
+        <span class="capitalize">&#128176; ${trip.budget} budget</span>
+        <span class="capitalize">&#128101; ${trip.travelStyle} trip</span>
+        <span class="text-pink-400">&#128176; Total: ${trip.totalEstimatedCost}</span>
+      </div>
+    </div>
+
+    <!-- Info row -->
+    <div class="grid sm:grid-cols-3 gap-4 mb-8">
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">&#127783;&#65039; Weather</h3>
+        <p class="text-sm text-gray-300">${trip.weatherInfo||'Check local forecasts before travel.'}</p>
+      </div>
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">&#128197; Best Time to Visit</h3>
+        <p class="text-sm text-gray-300">${trip.bestTimeToVisit||'Year-round'}</p>
+      </div>
+      ${trip.hotelSuggestions&&trip.hotelSuggestions[0]?`
+      <div class="glass rounded-xl p-5">
+        <h3 class="text-sm font-medium text-gray-400 mb-2">&#11088; Top Hotel</h3>
+        <p class="text-sm text-white font-medium">${trip.hotelSuggestions[0].name}</p>
+        <p class="text-xs text-gray-500">${trip.hotelSuggestions[0].priceRange} &middot; ${trip.hotelSuggestions[0].rating}</p>
+      </div>`:''}
+    </div>
+
+    <!-- Day tabs -->
+    <div class="flex gap-2 overflow-x-auto pb-2 mb-6" id="dayTabs"></div>
+    <div id="dayContent"></div>
+
+    ${tipsHtml}
+    ${hotelsHtml}
+  </div></div>`;
+}
+
+function initDayTabs(){
+  const trip=trips.find(t=>t.id===viewingTripId);
+  if(!trip||!trip.itinerary) return;
+  activeDay=0;
+  renderDayTabs(trip);
+  renderDayContent(trip);
+}
+
+function renderDayTabs(trip){
+  const el=document.getElementById('dayTabs');
+  if(!el) return;
+  el.innerHTML=trip.itinerary.map((d,i)=>
+    `<button onclick="switchDay(${i})" class="shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition ${i===activeDay?'tab-active':'glass text-gray-500 hover:text-white'}">Day ${d.day}</button>`
+  ).join('');
+}
+
+function renderDayContent(trip){
+  const el=document.getElementById('dayContent');
+  if(!el) return;
+  const d=trip.itinerary[activeDay];
+  if(!d){ el.innerHTML=''; return; }
+
+  let h=`<h2 class="text-xl font-bold text-white mb-6 fade-up">${d.title}</h2><div class="space-y-4 mb-8">`;
+  d.activities.forEach((a,i)=>{
+    h+=`<div class="glass rounded-xl p-5 flex gap-4 fade-up" style="animation-delay:${i*0.06}s">
+      <div class="shrink-0 w-20 text-center">
+        <div class="text-cyan-400 text-xs mb-1">&#128336;</div>
+        <span class="text-xs font-medium text-gray-400">${a.time}</span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <h4 class="text-sm font-semibold text-white">${a.activity}</h4>
+        <p class="text-xs text-gray-500 mt-1">&#128205; ${a.location}</p>
+        ${a.description?`<p class="text-xs text-gray-600 mt-1">${a.description}</p>`:''}
+      </div>
+      <span class="shrink-0 text-xs font-medium text-pink-400 bg-pink-400/10 px-2.5 py-1 rounded-full self-start">${a.estimatedCost}</span>
+    </div>`;
+  });
+  h+=`</div>`;
+
+  // Meals
+  if(d.meals){
+    h+=`<div class="glass rounded-xl p-5 mb-6 fade-up"><h3 class="text-sm font-medium text-gray-300 mb-3">Meal Suggestions</h3>
+    <div class="grid sm:grid-cols-3 gap-3 text-sm">`;
+    ['breakfast','lunch','dinner'].forEach(m=>{
+      if(d.meals[m]) h+=`<div class="bg-[#0f0f1a]/50 rounded-lg p-3"><span class="text-xs uppercase text-gray-600 tracking-wide">${m}</span><p class="text-gray-300 mt-1">${d.meals[m]}</p></div>`;
+    });
+    h+=`</div></div>`;
+  }
+
+  // Day tips
+  if(d.tips&&d.tips.length>0){
+    h+=`<div class="glass rounded-xl p-5 fade-up"><h3 class="text-sm font-medium text-gray-300 mb-3">&#128161; Tips for the day</h3><ul class="space-y-1.5">`;
+    d.tips.forEach(t=>{h+=`<li class="text-sm text-gray-500 flex gap-2"><span class="text-yellow-400 shrink-0">&bull;</span>${t}</li>`;});
+    h+=`</ul></div>`;
+  }
+
+  el.innerHTML=h;
+}
+
+function switchDay(i){
+  const trip=trips.find(t=>t.id===viewingTripId);
+  if(!trip) return;
+  activeDay=i;
+  renderDayTabs(trip);
+  renderDayContent(trip);
+}
+
+// =====================================================================
+//  INIT
+// =====================================================================
+updateNav();
+render();
+</script>
+</body>
+</html>
